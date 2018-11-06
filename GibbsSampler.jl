@@ -6,6 +6,7 @@
 #####
 
 using DataFrames
+using Distributions
 
 ##### Initialization
 
@@ -154,12 +155,12 @@ epsilon = zeros(Float64, nIteration)
 
 sigma2_epsilon = zeros(Float64, nIteration)
 prior_nu_epsilon = # prior
-priro_sigma2_epsilon = # prior
+prior_sigma2_epsilon = # prior
 
 ### alpha
 alpha = zeros(Float64, nIteration)
-a_bar = # prior
-b_bar = # prior
+prior_a = # prior
+prior_b = # prior
 
 
 ### costRenege
@@ -696,7 +697,7 @@ function update_costRenege_variance()
 	# IGamma
 	# number of observation used = nStudents
 	t_cRenege = costRenege[nIter, :]
-	s2 = sum((t_cRenege .- mu_cRenege[nIter]).^2) / n
+	s2 = sum((t_cRenege .- mu_cRenege[nIter]).^2) / nStudents
 
 	post_nu_cRenege = prior_nu0_cRenege + nStudents
 	post_sigma2_cRenege = (prior_nu0_cRenege * prior_sigma2_cRenege + nStudents * s2) / post_nu_cRenege
@@ -708,7 +709,6 @@ function update_beta_bar()
 	# Normal
 	# number of observation used = nPrograms * nStudents
 
-	# construct Data
 	Y = zeros(Float64, (nStudents, nPrograms))
 	for i = 1:nStudents
 		for j = 1:nPrograms
@@ -725,49 +725,174 @@ function update_beta_bar()
 		end
 	end
 
-	post_Sigma_beta_bar = (prior_Sigma_beta_bar^(-1) + X' * X ./ sigma2_epsilon)^(-1)
-	beta_bar[nIter] = rand(MultivariateNormal(zeros(Float64, lProgramX), post_Sigma_beta_bar), 1)[1]
+	post_Sigma_beta_bar = (prior_Sigma_beta_bar^(-1) + X' * X ./ sigma2_epsilon[nIter])^(-1)
+	post_mu_beta_bar = post_Sigma_beta_bar * (X' * Y / sigma2_epsilon[nIter])
+
+	new_beta_bar = rand(MultivariateNormal(post_mu_beta_bar, post_Sigma_beta_bar), 1)[1]
 end
 
 function update_ksi(j::Int64)
 	# Normal
-	# number of observation used = nPrograms
+	# number of observation used = nStudents
+
+	Y = zeros(Float64, nStudents)
+	for i = 1:nStudents
+		Y[i] = deductUtility(i, j, deduct = "ksi")
+	end
+
+	post_mu_ksi = (n * mean(Y) / sigma2_epsilon) / (1 / prior_sigma2_ksi + n / sigma2_epsilon[nIter])
+	post_sigma2_ksi = (1 / prior_sigma2_ksi + n / sigma2_epsilon[nIter])^(-1)
+
+	new_ksi = rand(Normal(post_mu_ksi, post_sigma2_ksi), 1)[1]
 end
 
 function update_sigma2_ksi(j::Int64)
-	 # Normal
+	 # InverseGamma
 	 # number of observations used = nPrograms
+	 t_ksi= ksi[nIter, :]
+	 s2 = sum(t_ksi.^2) / nPrograms
+
+	 post_mu_ksi = prior_mu_ksi + nPrograms
+	 post_sigma2_ksi = (prior_nu_ksi * prior_sigma2_ksi + nPrograms * s2) / post_mu_ksi
+
+	 new_sigma2_ksi = rand(InverseGamma(post_mu_ksi / 2, post_mu_ksi *  post_sigma2_ksi / 2), 1)[1]
 end
 
 function update_lambda()
 	# Normal
 	# number of observations used = nPrograms * nStudents
+	Y = zeros(Float64, (nStudents, nPrograms))
+	for i = 1:nStudents
+		for j = 1:nPrograms
+			Y[i, j] = deductUtility(i, j, deduct = "lambda")
+		end
+	end
+	Y = reshape(Y, (nStudents * nPrograms), 1)
+
+	X = reshape(Distance, (nStudents * nPrograms), 1)
+
+	post_sigma2_lambda = (prior_sigam2^(-1) + X' * X / sigma2_epsilon[nIter])^(-1)
+	post_mu_lambda = post_sigma2_lambda * (nPrograms * mean(Y) / sigma2_epsilon)
+
+	new_lambda = rand(Normal(post_mu_lambda, post_sigma2_lambda), 1)[1]
+
 end
+
+function update_linear_coefficient()
+	# Normal
+	# number of observation used = nStudents * nPrograms
+	Y = zeros(Float64, (nStudents, nPrograms))
+	for i = 1:nStudents
+		for j = 1:nPrograms
+			Y[i, j] = deductUtility(i, j, deduct = "eta_o")
+		end
+	end
+	Y = reshape(Y, (nStudents * nPrograms), 1)
+
+	X =  zeros(Float64, lStudentX * lProgramX)
+	for i = 1:nStudents
+		studentX = Students[i].X
+		for j = 1:nPrograms
+			interactX = reshape(studentX * programX', (lStudentX * lProgramX, 1))
+			X[(i - 1) * nStudents + j, :] = interactX
+		end
+	end
+
+	post_Sigma_eta_o = (prior_Sigma_eta_o^(-1) + X' * X / sigma2_epsilon[nIter])^(-1)
+	post_mu_eta_o = post_Sigma_eta_o * (X' * Y / sigam2_epsilon[nIter])
+
+	new_eta_o = rand(MultivariateNormal(post_mu_eta_o, post_Sigma_eta_o), 1)[1]
+end
+
 
 function update_random_coefficient(i::Int64)
 	# Normal
 	# number of observation used = nPrograms (of the same student)
+	Y = zeros(Float64, (nPrograms, 1))
+	for j = 1:nPrograms
+		Y[j, 1] = deductUtility(i, j, deduct = "eta_u")
+	end
+
+	X = zeros(Float64, (nPrograms, lProgramX))
+	for j = 1:nPrograms
+		X[j, :] = Programs[j].X
+	end
+
+	post_Sigma_eta_u = (prior_Sigma_eta_u^(-1), X' * X / sigma2_epsilon[nIter])^(-1)
+	post_mu_eta_u = post_Sigma_eta_o * (X' * Y / sigma2_epsilon[nIter])
+
+	new_eta_u = rand(MultivariateNormal(post_mu_eta_u , post_Sigma_eta_u), 1)[1]
 end
+
 
 function update_random_coefficient_variance()
 	# IW
 	# number of observation used = nStudents
+	Y = zeros(Float64, (nStudents, lProgramX))
+	for i = 1:nStudents
+		Y[i, :] = eta_u[nIter, i]
+	end
+
+	S = zeros(Float64, (lProgramX, lProgramX))
+	for i = 1:nStudents
+		S = S + Y[i, :] * Y[i, :]'
+	end
+
+	post_nu_eta_u = prior_nu_eta_u + nStudents
+	post_Sigma_eta_u = prior_Sigma_eta_u + S
+
+	new_Sigma_eta_u = rand(InverseWishart(post_nu_eta_u, post_Sigma_eta_u), 1)[1]
+
 end
+
+
+shocks = Array{Matrix{Float64}, 1}(undef, nIteration)
+# Matrix should be (nStudents * nOffPlatform)
+
+mu_w = zeros(Float64, nIteration)
+prior_mu_w = # prior
+prior_sigma2_w
+
+sigma2_w = zeros(Float64, nIteration)
+prior_nu_w = # prior
+prior_s2_w = # prior
+
 
 function update_shock_mean()
 	# Normal
 	# number of observation used = nStudents * nOffPlatform
+	Y = reshape(shocks[nIter], nStudents * nOffPlatform, 1)
+
+	post_sigam2_w = (1 / prior_sigma2_w + nStudents * nOffPlatform / sigma2_w[nIter])^(-1)
+	post_mu_w = post_sigam2_w * (prior_mu_w / prior_sigma2_w + nStudents * nOffPlatform * mean(y) / sigma2_w[nIter])
+
+	new_mu_w = rand(Normal(post_mu_w, post_sigam2_w), 1)[1]
+
 end
 
 function update_shock_variance()
 	# IGamma
 	# number of observation used = nStudents * nOffPlatform
+	Y = reshape(shocks[nIter], nStudents * nOffPlatform, 1)
+	s2 = sum((Y .- mu_w[nIter]).^2) ./ (nStudents * nOffPlatform)
+
+	post_nu_w = prior_nu_w + nStudents * nOffPlatform
+	post_s2_w = (prior_nu_w * prior_s2_w + nStudents * nOffPlatform * s2) / post_nu_w
+
+	new_sigma2_w = rand(InverseGamma(post_nu_w  / 2, post_nu_w * post_s2_w / 2), 1)[1]
 end
 
 function update_alpha()
 	# Beta
 	# number of observation used = nStudents * nOnPatform
 	# Is it reasonable ???
+
+	Y = reshape(offer, nStudents * nOnPatform, 1)
+
+	post_a = prior_a + sum(Y)
+	post_n = prior_b + nStudents * nOnPatform - sum(Y)
+
+	new_alpha = rand(Beta(post_a, post_n), 1)[1]
 end
 
 function deductUtility(i::Int64, j::Int64, deduct::String)
