@@ -12,6 +12,8 @@ using DataFrames
 ### data required
 
 waitlist = Array{Bool, 2}(undef, nStudents, nPrograms)
+Distance = Matrix{Float64}(undef, nStudents, nPrograms)
+
 
 onPlatformPrograms = Dataframe()
 # should be like
@@ -27,7 +29,7 @@ onPlatformProgramsDict = Dict{String, Int64}()
 # ...
 # on program 3 => J
 
-offPlarformPrograms = Dataframe()
+offPlatformPrograms = Dataframe()
 # should be like
 # ID      Name
 #  1	  on program 1
@@ -50,8 +52,8 @@ nOffPlatform
 
 nIteration
 
-nStudentX
-nProgramX
+lStudentX
+lProgramX
 
 ### define types
 
@@ -62,12 +64,16 @@ mutable struct student
 						   programID = String[],
 						   status = String[])
 	finalPlacement::Int64 # should be enrolled program's id
-	finalPlacementType::Bool
+	finalPlacementType::Bool # 0: On; 1: Off
 	waitlistedPrograms::DataFrame(order = Int64[],
-								  programID = String[])
+								  programID = String[],
+								  status = String[])
 	## Following not sure
 	rankInPrograms::Dict{String, Int} # should be (program id, rank)
 	initialPlacement::Int64
+	application_offPlatform::DataFrame(order = Int64[],
+						   programID = String[],
+						   status = String[])
 end
 
 Students = Array{student, 1}(undef, nStudents)
@@ -91,19 +97,24 @@ function sIndexRule(i::Int64, j::Int64)
 	return sIndex_ij
 end
 
-sIndex = zeros(Int64, (nStudents, nPrograms)) # This should be determined ex-ante
+sIndex = zeros(Int64, (nStudents, nOnPlatform)) # This should be determined ex-ante
+sIndexOff = zeros(Int64, (nStudents, nOffPlatform))
+
 
 ### data augmentation: These values will be updated in each iteration, but are temporal
 
-utilityOn = zeros(Float64, (nStudent, nOnPlatform))
-utilityOff = zeros(Float64, (nStudent, nOffPlatform))
+utilityOn = zeros(Float64, (nStudents, nOnPlatform))
+utilityOff = zeros(Float64, (nStudents, nOffPlatform))
 
-feas = zeros(Bool, (nStudent, nOffPlatform))
-accept = zeros(Bool, (nStudent, nOffPlatform))
-offer = zeros(Bool, (nStudent, nOffPlatform))
+feas = zeros(Bool, (nStudents, nOffPlatform))
+accept = zeros(Bool, (nStudents, nOffPlatform))
+offer = zeros(Bool, (nStudents, nOffPlatform))
 
-probWaitlistOffer = zeros(Float64, (nStudents, nOnPlatform))
-
+probWaitlistOffer = Array{DataFrame, 1}(undef, nStudents)
+# DataFrame here should be
+# order		programID 		prob
+#   1		  ID1			p_i1
+#   2		  ID2			p_i2
 
 ### parameters: These values will be updated ub each iteration and will be stored
 
@@ -112,35 +123,38 @@ probWaitlistOffer = zeros(Float64, (nStudents, nOnPlatform))
 ## (1) delta_j = x_j * beta_bar + ksi_j
 # beta_bar ~ MN(0, Sigma_beta_bar)
 beta_bar = Array{Array{Float64, 1}, 1}(undef, nIteration)
-Sigma_beta_bar = # prior
+prior_Sigma_beta_bar = # prior
 
 # ksi_j ~ N(0, sigma_ksi^2), sigma_ksi^2 ~ IGamma(\bar{nu_ksi}, \bar{sigma_ksi}^2)
 ksi = zeros(Float64, (nIteration, nPrograms))
 
 sigma2_ksi = zeros(Float64, nIteration)
-nu_ksi_bar = # prior
-sigam2_ksi_bar = # prior
+prior_nu_ksi = # prior
+prior_sigma2_ksi = # prior
 
 ## (2) lambda ~ N(0, \bar{sigma_lambda}^2)
 lambda = zeros(Float64, nIteration)
-sigma2_lambda_bar = # prior
+prior_sigma2_lambda = # prior
 
 ## (3) eta_ij = \sum \sum eta_o_lk * studentX_k * programX_l + \sum eta_u_l * programX_l
-# eta_o ~ MN(0, Sigma_eta_o), Sigma_eta_o ~ IW(nu_eta_o_bar, S_eta_o_bar)
-eta_o = Matrix{Array{Float64, 1}}(undef, nIteration, nStudent) # element would be coefficient
+# eta_o ~ MN(0, Sigma_eta_o)
+# eta_u ~ MN(0, Sigma_eta_u), Sigma_eta_u ~ IW(nu_eta_u, Sigma_eta_u)
+# element would be coefficient
+eta_o = Array{Array{Float64, 1}, 1}(undef, nIteration)
+prior_Sigma_eta_o = # prior
 
-Sigma_eta_o = Array{Matrix{Float64}, 1}(undef, nIteration)
-nu_eta_o_bar = # prior
-S_eta_o_bar = # prior
+eta_u = Matrix{Array{Float64, 1}}(undef, nIteration, nStudents)
 
-# eta_u ~ MN(0, Sigma_eta_u_bar)
-eta_u = Array{Array{Float64, 1}, 1}(undef, nIteration)
-Sigma_eta_u_bar = # prior
+Sigma_eta_u = Array{Matrix{Float64}, 1}(undef, nIteration)
+prior_nu_eta_u = # prior
+prior_Sigma_eta_u =  #prior
 
 ## (4) epsilon ~ N(0, sigma2_epsilon), sigma2_epsilon ~ IGamma(nu_epsilon_bar, sigma2_epsilon_bar)
 epsilon = zeros(Float64, nIteration)
-nu_epsilon_bar = # prior
-sigma2_epsilon_bar = # prior
+
+sigma2_epsilon = zeros(Float64, nIteration)
+prior_nu_epsilon = # prior
+priro_sigma2_epsilon = # prior
 
 ### alpha
 alpha = zeros(Float64, nIteration)
@@ -154,13 +168,13 @@ b_bar = # prior
 # - sigma2_renege ~ IGamma(nu_sigma2_renege_bar, sigma2_sigma2_renege_bar)
 costRenege = zeros(Float64, (nIteration, nStudents))
 
-mu_renege = zeros(Float64, (nIteration, nStudents))
-mu_renege_bar = # prior
-sigma2_mu_renege_bar = # prior
+mu_cRenege = zeros(Float64, (nIteration, nStudents))
+prior_mu0_cRenege = # prior
+prior_tau2_cRenege = # prior
 
-sigma2_renege = zeros(Float64m (nIteration, nStudents))
-nu_sigma2_renege_bar = # prior
-sigma2_sigma2_renege_bar = # prior
+sigma2_cRenege = zeros(Float64, (nIteration, nStudents))
+prior_nu0_cRenege = # prior
+prior_sigma2_cRenege = # prior
 
 
 ### shocks
@@ -170,15 +184,16 @@ sigma2_sigma2_renege_bar = # prior
 # mu_w ~ N(0, sigma2_mu_w_bar)
 # sigma2_w ~ IGamma(nu_sigam_w_bar, s_sigma_w_bar)
 
-Array{Matrix{Float64}, 1}(undef, nIteration)
 shocks = Array{Matrix{Float64}, 1}(undef, nIteration)
+# Matrix should be (nStudents * nPrograms)
 
 mu_w = zeros(Float64, nIteration)
-sigma2_mu_w_bar = # prior
+prior_mu_w = # prior
+prior_sigma2_w
 
 sigma2_w = zeros(Float64, nIteration)
-nu_sigam_w_bar = # prior
-s_sigma_w_bar = # prior
+prior_nu_w = # prior
+prior_s2_w = # prior
 
 
 
@@ -245,14 +260,8 @@ function isWaitlisted(i::Int64, j::Int64)
 	waitlisted = false
 	order_j = findall(application[:program] .== onPlatformPrograms[j])
 	if length(order_j) > 0
-		status = application[:status]
-		if status == "waitlisted"
-			waitlisted = true
-		else
-			waitlisted = false
-		end
-	else
-		waitlisted = false
+		status = application[:status][order_j]
+		waitlisted = (application[:status] == "waitlisted")
 	end
 	return waitlisted
 end
@@ -288,7 +297,8 @@ function update_onPlatform_utility(i::Int64, j::Int64)
 	truncL = -Inf
 	truncU = Inf
 
-	if isWaitlisted(i, j) == true # j is on the waitlist (then must be feasible)
+	# If j is on the waitlist (then must be feasible)
+	if isWaitlisted(i, j) == true
 		# some constraint 1:
 		# - constraint from other wailisted program
 		# 	- programs on the waitlist but have higher order give larger utility
@@ -339,18 +349,78 @@ function update_onPlatform_utility(i::Int64, j::Int64)
 		# NOTE: seems that deltaV only imposes constraint on u_ik and u_ij
 	end
 
-	if # j is the initial placement (then must be feasible)
+
+	# If j is the initial placement (then must be feasible)
+	if programID_j == Students[i].initialPlacement
 		# some constraint 2:
 		# - programs on the waitlist give larger utility
 		# - all programs that are feasible give less utility
 		# - off platform constraint
+
+		# constraint from waitlist programs
+		waitlistedPrograms = Students[i].waitlistedPrograms
+		num_waitlistedPrograms = length(waitlistedPrograms[:order])
+		if num_waitlistedPrograms > 0
+			for jj = 1:num_waitlistedPrograms
+				programNUM_jj = onPlatformProgramsDict[jj]
+				truncU = setUpperBound(truncU, utilityOn[i, programNUM_jj])
+			end
+		end
+
+		# constraint from all other feasible programs
+		for jj = 1:nOnPlatform
+			programID_jj = onPlatformPrograms[jj]
+			if programID_jj != programID_j
+				if isFeasible(i, jj) == true
+					truncL = setLowerBound(truncL, utilityOn[i, jj])
+				end
+			end
+		end
+
+		# constraint from off platform programs
+		for kk = 1:nOffPlatform
+			if feas[i, k] == 1 && accept[i, k] == 0
+				deltaVBound = calcDeltaVBound(i, kk, boundfor = "u_ij")
+				truncL = setLowerBound(truncL, deltaVBound)
+			end
+
+			if accept_ik == 1
+				deltaVBound = calcDeltaVBound(i, kk, boundfor = "u_ij")
+				truncU = setUpperBound(truncU, deltaVBound)
+			end
+
+		end
 	end
 
-	if # j is other programs (may not be feasible)
-		if isFeasible(i, j)
+	# j is other programs (may not be feasible)
+	if isWaitlisted(i, j) == false && programID_j != Students[i].initialPlacement
+		if isFeasible(i, j) == true
 			# some constraint 3
 			# - smaller than initial placemant and waitlist
-			# - off platform constraint
+			# - smaller than waitlist feasible and chosen program ???
+
+			# constraint from waitlist programs
+			waitlistedPrograms = Students[i].waitlistedPrograms
+			num_waitlistedPrograms = length(waitlistedPrograms[:order])
+			if num_waitlistedPrograms > 0
+				for jj = 1:num_waitlistedPrograms
+					programNUM_jj = onPlatformProgramsDict[jj]
+					truncU = setUpperBound(truncU, utilityOn[i, programNUM_jj])
+				end
+			end
+
+			# constraint from initialPlacement
+			initialPlacement = Students[i].initialPlacement
+			initialPlacementNUM = onPlatformProgramsDict[initialPlacement]
+			truncU = setUpperBound(truncU, utilityOn[i, initialPlacementNUM])
+
+			# constraint from selected programs
+			for jj = 1:length(application[:order])
+				if isWaitlistFeasible(i, jj) == true
+					programNUM_jj = onPlatformProgramsDict[application[:program][jj]]
+					truncU = setUpperBound(truncU, utilityOn[i, programNUM_jj])
+				end
+			end
 		else
 			# Don't care
 		end
@@ -359,28 +429,75 @@ function update_onPlatform_utility(i::Int64, j::Int64)
 	# calculate Xb
 	# sample u_ij from truncated normal N(Xb, sigma2_epsilon_bar)
 	# update utilityOn[i, j]
+	uij_mean = calcUtilityMean(i, j)
+	new_uij = rand(TruncatedNormal(uijMean, epsilon[nIter], truncL, truncU), 1)[1]
+	utilityOn[i, j] = new_uij
+
 end
 
 function isFeasible(i::Int64, j::Int64)
 	# check if student i if feasible at program j
-	return true
+	return sIndex[i, j] > Programs[j].pi
 end
 
 function isWaitlistFeasible(i::Int64, j::Int64)
-	if sIndex[i, j] > Programs[j].piWaitlist
-		return true
-	else
-		return false
-	end
+	return  sIndex[i, j] > Programs[j].piWaitlist
 end
 
-function calc_deltaVBound(i::Int64, j::Int64, k::Int64)
+function calcDeltaVBound(i::Int64, k::Int64, boundfor::String)
 	# Given utilityOn and utilityOff
+	probs = probWaitlistOffer[i][:prob]
+	productPI = 1
+	for ii = 1:length(probs)
+		productPI = productPI * (1 - probs[ii])
+	end
 
+	if boundfor == "u_ij"
+		deltaVBound = utilityOff[i, k] - ((1 - productPI) / productPI) * costRenege[i]
+	end
 
+	if boundfor == "u_ik"
+		j = onPlatformProgramsDict[Students[i].initialPlacement]
+		deltaVBound = utilityOn[i, j] + ((1 - productPI) / productPI) * costRenege[i]
+	end
+
+	if boundfor == "c"
+		j = onPlatformProgramsDict[Students[i].initialPlacement]
+		deltaVBound = (utilityOff[i, k] - utilityOn[i, j]) * productPI / (1 - productPI)
+	end
 
 	return deltaVBound
 end
+
+function calcUtilityMean(i::Int64, j::Int64)
+	# U = Xb + eps, this function calculates the Xb part
+	studentX = Students[i].X
+	programX = Programs[j].X
+
+	# t for temporary
+
+	# delta_j
+	t_beta_bar = beta_bar[nIter]
+	term1 = studentX' * t_beta_bar + ksi[nIter]
+
+	# lambda * D_ij
+	t_lambda = lambda[nIter]
+	term2 = t_lambda * Distance[i, j]
+
+	# eta_ij
+	interactX = reshape(studentX * programX', (lStudentX * lProgramX, 1))
+	t_eta_o = eta_o[nIter]
+	term3_1 = interactX' * t_eta_o
+
+	t_eta_u = eta_u[nIter, i]
+	term3_2 = programX' * t_eta_u
+
+	return term1 + term2 + term3_1 + term3_2
+end
+
+
+
+
 
 # Step 1(b): update w_ik
 
@@ -388,53 +505,58 @@ function update_shocks(i::Int64, k::Int64)
 	truncL = -Inf
 	truncU = Inf
 
-	if Students[i].finalPlacement == k
-		if -sIndex[i, k] > truncL
-			truncL = -sIndex[i, k]
-		end
+	if Students[i].finalPlacement == onPlatformPrograms[k]
+		truncL = setLowerBound(truncL, -sIndexOff[i, k])
 	end
 
 	# if restrictions on utility would be violated when k is feasible:
-	# - violate for all k such that feas_ik = 0 and accept_ik = 0, delta V_kj < 0
+	# - if accept_ik = 0, then must have delta V_kj < 0, otherwise need w_ik s.t. k is not feasible
+	# - if accept_ik = 1, then must have delta V_kj > 0, otherwise need w_ik s.t. k is feasible
+	deltaVi_kj = calcDeltaV(i, k)
+
 	if accept[i, k] == 0
-		for j = 1:nOnPlatform
-			if isFeasible(i, j) == true
-				deltaVi_kj = calc_deltaV(i, j, k)
-				if deltaVi_kj >= 0
-					if -sIndex[i, k] < truncU
-						truncU = -sIndex[i, k]
-					end
-				end
-			end
+		if deltaVi_kj >= 0
+			truncU = setUpperBound(truncU, -sIndexOff[i, k])
+		end
+	end
+
+	if accept[i, k] == 1
+		if deltaVi_kj <= 0
+			truncL = setLowerBound(truncL, -sIndexOn[i, k])
 		end
 	end
 
 	# sample w_ik from truncated Normal N(-pi_k, \sigma_v^2)
+	new_w_ik = rand(TruncatedNormal(mu_w[nIter], sigma2_w[nIter], truncL, truncU), 1)[1]
+	shocks[nIter]][i, k] = new_w_ik
 
 end
 
-function calc_deltaV(i::Int64, j::Int64, k::Int64)
+function calcDeltaV(i::Int64, k::Int64)
+	probs = probWaitlistOffer[i][:prob]
+	productPI = 1
+	for ii = 1:length(probs)
+		productPI = productPI * (1 - probs[ii])
+	end
 
-
+	deltaVi_kj = -(1 - productPI) * costRenege[nIter, i] + productPI * (utilityOff[i, k] - utilityOn[i, j])
 	return deltaVi_kj
 end
 
 
 function update_feas(i::Int64, k::Int64)
-	if sIndex[i, k] > shocks[i, k]
-		feas[i, k] = true
-	else
-		feas[i, k] = false
-	end
+	feas[i, k] = (sIndex[i, k] + shocks[i, k] > 0)
 end
+
+
 
 
 # Step 1(c): update accept
 
 function update_accept(i::Int64, k::Int64)
 	j = Students[i].initialPlacement
-	deltaVi_kj = calc_deltaV(i, j, k)
-	if feas[i, k] == true & deltaVi_kj > 0
+	deltaVi_kj = calcDeltaV(i, k)
+	if feas[i, k] == 1 && deltaVi_kj > 0
 		accept[i, k] = 1
 	end
 end
@@ -444,20 +566,22 @@ end
 
 function update_offer(i::Int64, j::Int64)
 	application = Students[i].application
-	if j in application[2,:]
-		rank_j = findall(application[2,:] .== j)
+	programID = onPlatformPrograms[j]
 
-		if application[3, rank_j] == Students[i].finalPlacement
-			offer[i, j] = 0
+	if programID in application[:programID]
+		rank_j = findall(application[:programID] .== programID)
+
+		if programID == Students[i].finalPlacement
+			offer[i, j] = 1
 		end
 
-		if application[3, rank_j] == "Waitlist" # data type to be altered
+		if application[:status][rank_j] == "Waitlist" # data type to be altered
 			if Students[i].finalPlacementType == "OffPlatform" # data type to be altered
 				offer[i, j] = 0
 			end
 
 			if Students[i].finalPlacementType == "OnPlatform"
-				rankFinalPlacement = findall(application[2,:] . == Students[i].finalPlacement)
+				rankFinalPlacement = findall(application[:programID] .== Students[i].finalPlacement)
 
 				if rankFinalPlacement > rank_j
 					offer[i, j] = rand(Binomial(1, alpha[nIter]), 1)[1]
@@ -479,28 +603,45 @@ function update_offPlatform_utility(i::Int64, k::Int64)
 	truncL = -Inf
 	truncU = Inf
 
-	if Students[i].finalPlacement == k
-		# constraint deltaVi_kj > 0
+	if Students[i].finalPlacement == offPlatformPrograms[k]
+		# constraint from initialPlacement: deltaVi_kj > 0
+		deltaVBound = calcDeltaVBound(i, k, boundfor = "u_ik")
+		truncL = setLowerBound(truncL, deltaVBound)
 
-		for kk = 1:nOffPlatform
+		# constraint from other offPlatform programs
+		application_offPlatform = Students[i].application_offPlatform
+		for kk = 1:length(application_offPlatform[:order])
 			if kk != k
-				# contraint: ui_k > ui_kk
+				if application_offPlatform[:status] == "admitted"
+					# contraint: ui_k > ui_kk
+					programID_kk = application_offPlatform[kk]
+					programNUM_kk = offPlatformProgramsDict[programID_kk]
+					truncL = setLowerBound(truncL, utilityOff[i, programNUM_kk])
+				end
 			end
 		end
-
 	end
 
-	if # Students[i].finalPlacement is off from waitlit
+	# If Students[i].finalPlacement is off from waitlit
+	if Students[i].finalPlacement in Students[i].waitlistedPrograms[:programID]
 		# constraint ui_j' - c_i > ui_k
+		finalPlacementNUM = onPlatformProgramsDict[Students[i].finalPlacement]
+		truncU = setUpperBound(truncU, utilityOn[finalPlacementNUM] - costRenege[nIter, i])
 	end
 
 	if # Students[i].finalPlacement is other offPlatform
 		# some constraint
+
 	end
 
 	if # Students[i].finalPlacement is initial onPlatform placement
 		# some constraint
 	end
+
+	# update off platform utility
+	uik_mean = calcUtilityMean(i, k) - costSignUp
+	new_uik = rand(TruncatedNormal(uik_mean, ksi[nIter], truncL, truncU), 1)[1]
+	utilityOff[i, k] = new
 
 end
 
@@ -512,13 +653,24 @@ function update_costRenege(i::Int64)
 	truncL = -Inf
 	truncU = Inf
 
-	if # Student[i].finalPlacement is off from waitlist
+	# If Student[i].finalPlacement is off from waitlist
+	if Students[i].finalPlacement in Students[i].waitlistedPrograms[:programID]
 		# constraint: ui_j' - ci_renege > ui_k
+		finalPlacementNUM = onPlatformProgramsDict[Students[i].finalPlacement]
+		truncU = setUpperBound(truncU, utilityOn[finalPlacementNUM] - utilityOff[i, k])
 	end
 
-	if # Student[i].finalPlacement is some off Platform program k
+	# If Student[i].finalPlacement is some offPlatform program k
+	if Student[i].finalPlacementType == 1
 		# constraint: deltaVi_kj > 0
+		k = offPlatformProgramsDict[Students[i].finalPlacement]
+		deltaVBound = calcDeltaVBound(i, k, boundfor = "c")
+		truncU = setUpperBound(truncU, deltaVBound)
 	end
+
+	# update c_renege_i
+	new_c = exp(rand(TruncatedNormal(mu_renege, sigma2_renege, truncL, truncU), 1)[1])
+	costRenege[nIter, i] = new_c
 end
 
 
@@ -530,16 +682,51 @@ end
 function update_costRenege_mean()
 	# Normal
 	# number of observation used = nStudents
+	t_cRenege = costRenege[nIter, :]
+	t_cRenege_mean = mean(t_costRenege)
+
+	post_mu_cRenege = (prior_mu0_cRenege / prior_tau2_cRenege + nStudents * t_cRenege_mean / sigma2_cRenege) /
+					  (1 / prior_tau2_cRenege + nStudents / sigma2_cRenege)
+	post_sigma2 = (1 / prior_tau2_cRenege + nStudents / sigma2_cRenege)^(-1)
+
+	mu_cRenege[nIter] = rand(Normal(post_mu_cRenege, post_sigma2), 1)[1]
 end
 
 function update_costRenege_variance()
 	# IGamma
 	# number of observation used = nStudents
+	t_cRenege = costRenege[nIter, :]
+	s2 = sum((t_cRenege .- mu_cRenege[nIter]).^2) / n
+
+	post_nu_cRenege = prior_nu0_cRenege + nStudents
+	post_sigma2_cRenege = (prior_nu0_cRenege * prior_sigma2_cRenege + nStudents * s2) / post_nu_cRenege
+
+	sigma2_cRenege[nIter] = rand(InverseGamma(post_nu_cRenege / 2, post_nu_cRenege * post_sigma2_cRenege / 2), 1)[1]
 end
 
 function update_beta_bar()
 	# Normal
 	# number of observation used = nPrograms * nStudents
+
+	# construct Data
+	Y = zeros(Float64, (nStudents, nPrograms))
+	for i = 1:nStudents
+		for j = 1:nPrograms
+			Y[i, j] = deductUtility(i, j, deduct = "beta_bar")
+		end
+	end
+	Y = reshape(Y, (nStudents * nPrograms), 1)
+
+	X =  zeros(Float64, nStudents * nPrograms)
+	for j = 1:nPrograms
+		programX = Programs[j].X
+		for i = 1:nStudents
+			X[((j - 1) * nStudents + i), :] = programX'
+		end
+	end
+
+	post_Sigma_beta_bar = (prior_Sigma_beta_bar^(-1) + X' * X ./ sigma2_epsilon)^(-1)
+	beta_bar[nIter] = rand(MultivariateNormal(zeros(Float64, lProgramX), post_Sigma_beta_bar), 1)[1]
 end
 
 function update_ksi(j::Int64)
@@ -581,4 +768,49 @@ function update_alpha()
 	# Beta
 	# number of observation used = nStudents * nOnPatform
 	# Is it reasonable ???
+end
+
+function deductUtility(i::Int64, j::Int64, deduct::String)
+	studentX = Students[i].X
+	programX = Programs[j].X
+
+	# delta_j
+	t_beta_bar = beta_bar[nIter]
+	term1_1 = studentX' * t_beta_bar
+
+	term1_2 = ksi[nIter]
+
+	# lambda * D_ij
+	t_lambda = lambda[nIter]
+	term2 = t_lambda * Distance[i, j]
+
+	# eta_ij
+	interactX = reshape(studentX * programX', (lStudentX * lProgramX, 1))
+	t_eta_o = eta_o[nIter]
+	term3_1 = interactX' * t_eta_o
+
+	t_eta_u = eta_u[nIter, i]
+	term3_2 = programX' * t_eta_u
+
+	utilityMean = term1_1 + term1_2 + term2 + term3_1 + term3_2
+
+	if deduct == "beta_bar"
+		return utilityOn[i, j] - (utilityMean - term1_1)
+	end
+
+	if deduct == "ksi"
+		return utilityOn[i, j] - (utilityMean - term1_2)
+	end
+
+	if deduct == "lambda"
+		return utilityOn[i, j] - (utilityMean - term2)
+	end
+
+	if deduct == "eta_o"
+		return utilityOn[i, j] - (utilityMean - term3_1)
+	end
+
+	if deduct == "eta_u"
+		return utilityOn[i, j] - (utilityMean - term3_2)
+	end
 end
